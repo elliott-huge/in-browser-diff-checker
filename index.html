@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Text Diff Viewer</title>
+    <title>GitHub-style Diff Viewer</title>
     <style>
         .container {
             max-width: 1200px;
             margin: 20px auto;
             padding: 0 20px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
         }
         
         .input-grid {
@@ -25,81 +26,110 @@
             height: 200px;
             padding: 8px;
             margin: 8px 0;
-            font-family: monospace;
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+            font-size: 12px;
+            line-height: 20px;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
         }
         
         button {
-            padding: 10px 20px;
-            font-size: 16px;
+            padding: 8px 16px;
+            font-size: 14px;
             cursor: pointer;
-            background: #0066cc;
+            background: #2da44e;
             color: white;
-            border: none;
-            border-radius: 4px;
+            border: 1px solid rgba(27, 31, 36, 0.15);
+            border-radius: 6px;
             margin-bottom: 20px;
         }
         
         button:hover {
-            background: #0052a3;
+            background: #2c974b;
         }
         
-        #diff-output {
-            font-family: monospace;
-            white-space: pre-wrap;
-            border: 1px solid #ddd;
-            padding: 20px;
-            overflow-x: auto;
+        .diff-container {
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+
+        .diff-header {
+            padding: 8px 16px;
+            background: #f6f8fa;
+            border-bottom: 1px solid #d0d7de;
+            color: #24292f;
+            font-size: 12px;
+        }
+        
+        .diff-content {
+            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+            font-size: 12px;
+            line-height: 20px;
+            tab-size: 8;
         }
         
         .diff-line {
-            display: flex;
-            align-items: flex-start;
-            padding: 2px 0;
+            display: grid;
+            grid-template-columns: 50px 50px 1fr;
+            min-height: 20px;
         }
         
         .line-number {
-            width: 50px;
+            padding: 0 10px;
+            color: rgba(27, 31, 36, 0.6);
             text-align: right;
-            padding-right: 10px;
-            color: #666;
             user-select: none;
+            border-right: 1px solid #d0d7de;
+        }
+        
+        .line-number:hover {
+            color: #24292f;
+            cursor: pointer;
         }
         
         .line-content {
-            flex: 1;
-            padding-left: 10px;
+            padding: 0 10px;
+            white-space: pre;
         }
         
         .deletion {
-            background-color: #ffeef0;
+            background-color: #ffd7d5;
         }
         
-        .deletion .line-content {
-            color: #b31d28;
+        .deletion .line-number {
+            background-color: #fff1f0;
+            border-color: #ffd7d5;
         }
         
         .addition {
-            background-color: #e6ffec;
+            background-color: #ccffd8;
         }
         
-        .addition .line-content {
-            color: #22863a;
-        }
-
-        .inline-deletion {
-            background-color: #ffeef0;
-            color: #b31d28;
-            text-decoration: line-through;
-        }
-
-        .inline-addition {
+        .addition .line-number {
             background-color: #e6ffec;
-            color: #22863a;
+            border-color: #ccffd8;
+        }
+
+        .hunk-header {
+            background-color: #f6f8fa;
+            color: #57606a;
+        }
+
+        .hunk-header .line-number {
+            background-color: #f6f8fa;
         }
 
         #status {
-            color: #666;
+            color: #57606a;
             margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .empty-cell {
+            background-color: #fafbfc;
+            border-right-color: #fff;
         }
     </style>
 </head>
@@ -108,16 +138,16 @@
         <div class="input-grid">
             <div class="input-group">
                 <label>Original Text:</label>
-                <textarea id="original-text" placeholder="Enter original text...">Hello World</textarea>
+                <textarea id="original-text" placeholder="Enter original text..."></textarea>
             </div>
             <div class="input-group">
                 <label>New Text:</label>
-                <textarea id="new-text" placeholder="Enter new text...">Hello New World</textarea>
+                <textarea id="new-text" placeholder="Enter new text..."></textarea>
             </div>
         </div>
         <div id="status">Loading diff library...</div>
-        <button onclick="computeDiff()">Compare Texts</button>
-        <div id="diff-output"></div>
+        <button onclick="computeDiff()">Calculate Difference</button>
+        <div id="diff-container"></div>
     </div>
 
     <script>
@@ -128,46 +158,59 @@
         scriptElement.src = 'https://cdnjs.cloudflare.com/ajax/libs/diff_match_patch/20121119/diff_match_patch.js';
         scriptElement.onload = () => {
             dmpLoaded = true;
-            statusDiv.textContent = 'Diff library loaded - ready to compare';
-            statusDiv.style.color = '#22863a';
+            statusDiv.textContent = 'Ready to compare changes';
+            statusDiv.style.color = '#2da44e';
         };
         scriptElement.onerror = () => {
             statusDiv.textContent = 'Error loading diff library!';
-            statusDiv.style.color = '#b31d28';
+            statusDiv.style.color = '#cf222e';
         };
         document.head.appendChild(scriptElement);
 
-        function groupDiffsByLine(diff) {
-            const lines = [];
-            let currentLine = [];
-            let currentText = '';
+        function createHunkHeader(oldStart, oldCount, newStart, newCount) {
+            const div = document.createElement('div');
+            div.className = 'diff-line hunk-header';
             
-            diff.forEach(([type, text]) => {
-                const textLines = text.split('\n');
-                textLines.forEach((line, i) => {
-                    if (i > 0) {
-                        lines.push({
-                            parts: currentLine,
-                            text: currentText
-                        });
-                        currentLine = [];
-                        currentText = '';
-                    }
-                    if (line.length > 0) {
-                        currentLine.push([type, line]);
-                        currentText += line;
-                    }
-                });
-            });
+            const oldNum = document.createElement('div');
+            oldNum.className = 'line-number';
+            oldNum.textContent = '...';
             
-            if (currentLine.length > 0) {
-                lines.push({
-                    parts: currentLine,
-                    text: currentText
-                });
-            }
+            const newNum = document.createElement('div');
+            newNum.className = 'line-number';
+            newNum.textContent = '...';
             
-            return lines;
+            const content = document.createElement('div');
+            content.className = 'line-content';
+            content.textContent = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`;
+            
+            div.appendChild(oldNum);
+            div.appendChild(newNum);
+            div.appendChild(content);
+            
+            return div;
+        }
+
+        function createDiffLine(oldNum, newNum, content, type) {
+            const div = document.createElement('div');
+            div.className = 'diff-line' + (type ? ` ${type}` : '');
+            
+            const oldNumDiv = document.createElement('div');
+            oldNumDiv.className = 'line-number' + (oldNum ? '' : ' empty-cell');
+            oldNumDiv.textContent = oldNum || '';
+            
+            const newNumDiv = document.createElement('div');
+            newNumDiv.className = 'line-number' + (newNum ? '' : ' empty-cell');
+            newNumDiv.textContent = newNum || '';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'line-content';
+            contentDiv.textContent = content;
+            
+            div.appendChild(oldNumDiv);
+            div.appendChild(newNumDiv);
+            div.appendChild(contentDiv);
+            
+            return div;
         }
 
         function computeDiff() {
@@ -178,79 +221,136 @@
 
             const originalText = document.getElementById('original-text').value;
             const newText = document.getElementById('new-text').value;
-            const diffOutput = document.getElementById('diff-output');
+            const container = document.getElementById('diff-container');
             
             try {
                 const dmp = new diff_match_patch();
                 const diff = dmp.diff_main(originalText, newText);
                 dmp.diff_cleanupSemantic(diff);
                 
-                diffOutput.innerHTML = '';
+                // Create diff container
+                container.innerHTML = '';
+                const diffContainer = document.createElement('div');
+                diffContainer.className = 'diff-container';
                 
-                const lines = groupDiffsByLine(diff);
-                let oldLineNumber = 1;
-                let newLineNumber = 1;
+                // Add diff header
+                const header = document.createElement('div');
+                header.className = 'diff-header';
+                header.textContent = 'Showing changes';
+                diffContainer.appendChild(header);
                 
+                // Create diff content container
+                const content = document.createElement('div');
+                content.className = 'diff-content';
+                
+                // Process diff into lines with inline changes
+                const lines = [];
+                let currentLine = {
+                    oldNum: 1,
+                    newNum: 1,
+                    parts: [],
+                    text: ''
+                };
+                
+                // Group diffs by line
+                diff.forEach(([type, text]) => {
+                    const textLines = text.split('\n');
+                    textLines.forEach((line, i) => {
+                        if (i > 0 && currentLine.parts.length > 0) {
+                            lines.push(currentLine);
+                            currentLine = {
+                                oldNum: type !== 1 ? currentLine.oldNum + 1 : currentLine.oldNum,
+                                newNum: type !== -1 ? currentLine.newNum + 1 : currentLine.newNum,
+                                parts: [],
+                                text: ''
+                            };
+                        }
+                        if (line.length > 0) {
+                            currentLine.parts.push([type, line]);
+                            currentLine.text += line;
+                        }
+                    });
+                });
+                
+                if (currentLine.parts.length > 0) {
+                    lines.push(currentLine);
+                }
+                
+                // Detect unchanged lines and lines with inline changes
                 lines.forEach(line => {
-                    const diffLine = document.createElement('div');
-                    diffLine.className = 'diff-line';
-                    
-                    const oldNum = document.createElement('div');
-                    oldNum.className = 'line-number';
-                    
-                    const newNum = document.createElement('div');
-                    newNum.className = 'line-number';
-                    
-                    const content = document.createElement('div');
-                    content.className = 'line-content';
-                    
-                    // Determine line type
+                    // Check if line is purely addition, deletion, or unchanged
                     const hasAddition = line.parts.some(([type]) => type === 1);
                     const hasDeletion = line.parts.some(([type]) => type === -1);
-                    const hasEqual = line.parts.some(([type]) => type === 0);
+                    const hasUnchanged = line.parts.some(([type]) => type === 0);
                     
-                    if (hasEqual && !hasAddition && !hasDeletion) {
-                        // Unchanged line
-                        oldNum.textContent = oldLineNumber++;
-                        newNum.textContent = newLineNumber++;
-                        content.textContent = line.text;
-                    } else if (hasAddition && !hasDeletion) {
-                        // Pure addition
-                        diffLine.classList.add('addition');
-                        oldNum.textContent = '-';
-                        newNum.textContent = newLineNumber++;
-                        content.textContent = '+' + line.text;
-                    } else if (hasDeletion && !hasAddition) {
-                        // Pure deletion
-                        diffLine.classList.add('deletion');
-                        oldNum.textContent = oldLineNumber++;
-                        newNum.textContent = '-';
-                        content.textContent = '-' + line.text;
+                    // Mark line type for rendering
+                    if (line.parts.length === 1) {
+                        const [type] = line.parts[0];
+                        line.type = type;  // Pure addition, deletion, or unchanged
+                    } else if (hasUnchanged && !hasAddition && !hasDeletion) {
+                        line.type = 0;  // Unchanged
                     } else {
-                        // Mixed changes - show inline diff
-                        oldNum.textContent = oldLineNumber++;
-                        newNum.textContent = newLineNumber++;
+                        line.type = 'mixed';  // Has inline changes
+                    }
+                });
+                
+                // Add hunk header
+                content.appendChild(createHunkHeader(1, lines.length, 1, lines.length));
+                
+                // Process lines
+                lines.forEach(line => {
+                    let diffLine;
+                    if (line.type === -1) {
+                        // Pure deletion
+                        diffLine = createDiffLine(line.oldNum, '', '- ' + line.text, 'deletion');
+                    } else if (line.type === 1) {
+                        // Pure addition
+                        diffLine = createDiffLine('', line.newNum, '+ ' + line.text, 'addition');
+                    } else if (line.type === 0) {
+                        // Unchanged line
+                        diffLine = createDiffLine(line.oldNum, line.newNum, '  ' + line.text);
+                    } else {
+                        // Mixed changes - handle inline diff
+                        const contentDiv = document.createElement('div');
+                        contentDiv.className = 'line-content';
+                        contentDiv.appendChild(document.createTextNode('  '));
                         
                         line.parts.forEach(([type, text]) => {
                             const span = document.createElement('span');
                             span.textContent = text;
                             if (type === -1) {
-                                span.className = 'inline-deletion';
+                                span.style.backgroundColor = '#ffd7d5';
+                                span.style.textDecoration = 'line-through';
                             } else if (type === 1) {
-                                span.className = 'inline-addition';
+                                span.style.backgroundColor = '#ccffd8';
                             }
-                            content.appendChild(span);
+                            contentDiv.appendChild(span);
                         });
+                        
+                        diffLine = document.createElement('div');
+                        diffLine.className = 'diff-line';
+                        
+                        const oldNumDiv = document.createElement('div');
+                        oldNumDiv.className = 'line-number';
+                        oldNumDiv.textContent = line.oldNum;
+                        
+                        const newNumDiv = document.createElement('div');
+                        newNumDiv.className = 'line-number';
+                        newNumDiv.textContent = line.newNum;
+                        
+                        diffLine.appendChild(oldNumDiv);
+                        diffLine.appendChild(newNumDiv);
+                        diffLine.appendChild(contentDiv);
                     }
-                    
-                    diffLine.appendChild(oldNum);
-                    diffLine.appendChild(newNum);
-                    diffLine.appendChild(content);
-                    diffOutput.appendChild(diffLine);
+                    content.appendChild(diffLine);
                 });
+                
+                diffContainer.appendChild(content);
+                container.appendChild(diffContainer);
+                
             } catch (error) {
                 console.error('Error computing diff:', error);
-                diffOutput.innerHTML = '<div style="color: red;">Error computing diff: ' + error.message + '</div>';
+                container.innerHTML = '<div style="color: #cf222e;">Error computing diff: ' + error.message + '</div>';
             }
         }
     </script>
